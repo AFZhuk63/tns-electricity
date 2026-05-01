@@ -1,0 +1,796 @@
+<!--tns_electricity/templates/index.html-->
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ТНС энерго Кубань - Учёт электроэнергии</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'tns_electricity/style.css' %}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ ТНС энерго Кубань</h1>
+            <p>Учёт электроэнергии по двухтарифному счётчику</p>
+        </div>
+
+        <div class="main-card">
+            <div class="info-box">
+                <h3>📋 Информация о тарифах</h3>
+                <div class="tariffs">
+                    <div class="tariff-day">
+                        <strong>ДЕНЬ (7:00-23:00)</strong><br>
+                        1 диапазон (до 1100 kWh): 5.88 ₽<br>
+                        2 диапазон (1101-1700 kWh): 7.99 ₽<br>
+                        3 диапазон (>1700 kWh): 16.70 ₽
+                    </div>
+                    <div class="tariff-night">
+                        <strong>НОЧЬ (23:00-7:00)</strong><br>
+                        1 диапазон (до 1100 kWh): 3.16 ₽<br>
+                        2 диапазон (1101-1700 kWh): 4.30 ₽<br>
+                        3 диапазон (>1700 kWh): 8.93 ₽
+                    </div>
+                </div>
+                <small>⚠️ Диапазоны определяются по СУММАРНОМУ расходу (день+ночь)</small>
+            </div>
+
+            <!-- Начальные показания счётчика -->
+            <div class="initial-readings-section">
+                <h3>🔰 Начальные показания счётчика</h3>
+                <div class="form-group">
+                    <label>ДЕНЬ (Т1) начальные, кВт·ч</label>
+                    <input type="number" id="initialDayReading" step="0.01" placeholder="00000.00">
+                    <small>Введите начальные показания при первом запуске</small>
+                </div>
+                <div class="form-group">
+                    <label>НОЧЬ (Т2) начальные, кВт·ч</label>
+                    <input type="number" id="initialNightReading" step="0.01" placeholder="00000.00">
+                    <small>Введите начальные показания при первом запуске</small>
+                </div>
+                <div class="form-group">
+                    <label>📅 Дата начальных показаний</label>
+                    <input type="date" id="initialReadingDate" class="form-control">
+                    <small>Укажите дату установки начальных показаний</small>
+                </div>
+                <div class="button-group">
+                    <button class="btn-secondary" id="saveInitialBtn">💾 Сохранить начальные показания</button>
+                    <button class="btn-edit" id="editInitialBtn" style="display: none;">✏️ Редактировать</button>
+                    <button class="btn-delete" id="deleteInitialBtn" style="display: none;">🗑️ Удалить</button>
+                </div>
+            </div>
+
+            <hr class="separator">
+
+            <!-- Текущие показания счётчика -->
+            <div class="input-form">
+                <h3>✏️ Введите текущие показания счётчика</h3>
+                <div class="form-group">
+                    <label>ДЕНЬ (Т1) текущие, кВт·ч</label>
+                    <input type="number" id="dayReading" step="0.01" placeholder="00000.00">
+                </div>
+                <div class="form-group">
+                    <label>НОЧЬ (Т2) текущие, кВт·ч</label>
+                    <input type="number" id="nightReading" step="0.01" placeholder="00000.00">
+                </div>
+                <div class="form-group">
+                    <label>📅 Дата показаний (если за прошлый период)</label>
+                    <input type="date" id="readingDate" class="form-control">
+                    <small>Если передаёте показания за прошлый месяц, укажите дату</small>
+                </div>
+                <button class="btn-primary" id="calculateBtn">Рассчитать</button>
+            </div>
+        </div>
+
+        <div id="result" class="result-card" style="display: none;"></div>
+
+        <div class="history-section">
+            <h3>📜 История платежей</h3>
+            <div id="historyList" class="history-list"></div>
+        </div>
+    </div>
+
+    <!-- Модальное окно для добавления платежа -->
+    <div id="paymentModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h3>💳 Добавить платёж</h3>
+            <div class="form-group">
+                <label>Сумма платежа, ₽</label>
+                <input type="number" id="paymentAmount" step="0.01" placeholder="0.00">
+            </div>
+            <div class="form-group">
+                <label>📅 Дата платежа</label>
+                <input type="date" id="paymentDate" class="form-control">
+            </div>
+            <div class="form-group">
+                <label>📝 Примечание</label>
+                <input type="text" id="paymentNote" placeholder="Например: квитанция №123">
+            </div>
+            <div class="button-group">
+                <button class="btn-primary" onclick="savePayment()">💾 Сохранить</button>
+                <button class="btn-cancel" onclick="closeModal()">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Переменная для хранения ID текущего счёта
+        let currentBillId = null;
+
+        // Функция для получения CSRF токена
+        function getCSRFToken() {
+            const cookieValue = document.cookie.match('(^|;)\\s*csrftoken\\s*=\\s*([^;]+)')?.pop();
+            if (cookieValue) return cookieValue;
+            const metaToken = document.querySelector('meta[name="csrf-token"]');
+            if (metaToken) return metaToken.getAttribute('content');
+            return '';
+        }
+
+        // Ждём полной загрузки страницы
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Страница загружена, инициализация...');
+            loadLastReadings();
+            loadHistory();
+            checkInitialReadings();
+
+            const saveBtn = document.getElementById('saveInitialBtn');
+            if (saveBtn) {
+                saveBtn.onclick = saveInitialReadings;
+            }
+
+            const editBtn = document.getElementById('editInitialBtn');
+            if (editBtn) {
+                editBtn.onclick = editInitialReadings;
+            }
+
+            const deleteBtn = document.getElementById('deleteInitialBtn');
+            if (deleteBtn) {
+                deleteBtn.onclick = deleteInitialReadings;
+            }
+
+            const calculateBtn = document.getElementById('calculateBtn');
+            if (calculateBtn) {
+                calculateBtn.onclick = calculate;
+            }
+        });
+
+        // Проверка наличия начальных показаний
+        function checkInitialReadings() {
+            fetch('/api/check-initial-readings/')
+                .then(response => response.json())
+                .then(data => {
+                    const initialSection = document.querySelector('.initial-readings-section');
+                    if (!initialSection) return;
+
+                    const title = initialSection.querySelector('h3');
+                    const oldStatus = title.querySelector('.initial-status');
+                    if (oldStatus) oldStatus.remove();
+
+                    const statusSpan = document.createElement('span');
+                    statusSpan.className = 'initial-status ' + (data.has_initial ? 'set' : 'not-set');
+                    statusSpan.textContent = data.has_initial ? '✓ Начальные показания установлены' : '⚠ Начальные показания не установлены';
+                    title.appendChild(statusSpan);
+
+                    const saveBtn = document.getElementById('saveInitialBtn');
+                    const editBtn = document.getElementById('editInitialBtn');
+                    const deleteBtn = document.getElementById('deleteInitialBtn');
+                    const dayInput = document.getElementById('initialDayReading');
+                    const nightInput = document.getElementById('initialNightReading');
+                    const dateInput = document.getElementById('initialReadingDate');
+
+                    if (data.has_initial) {
+                        dayInput.placeholder = `Установлены: ${data.initial_day} kWh`;
+                        nightInput.placeholder = `Установлены: ${data.initial_night} kWh`;
+                        dayInput.value = '';
+                        nightInput.value = '';
+
+                        if (data.initial_date) {
+                            let displayDate = data.initial_date;
+                            if (displayDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+                                const parts = displayDate.split('-');
+                                displayDate = `${parts[2]}.${parts[1]}.${parts[0]}`;
+                            }
+                            const dateHint = document.createElement('small');
+                            dateHint.style.display = 'block';
+                            dateHint.style.marginTop = '5px';
+                            dateHint.style.color = '#4caf50';
+                            dateHint.innerHTML = `📅 Дата начальных показаний: ${displayDate}`;
+
+                            const parentDiv = document.querySelector('.initial-readings-section');
+                            const existingHint = parentDiv.querySelector('.initial-date-hint');
+                            if (existingHint) existingHint.remove();
+                            dateHint.className = 'initial-date-hint';
+                            parentDiv.appendChild(dateHint);
+                        }
+
+                        dayInput.disabled = true;
+                        nightInput.disabled = true;
+                        dateInput.disabled = true;
+                        saveBtn.style.display = 'none';
+                        editBtn.style.display = 'block';
+                        deleteBtn.style.display = 'block';
+                        initialSection.classList.remove('edit-mode');
+                    } else {
+                        dayInput.disabled = false;
+                        nightInput.disabled = false;
+                        dateInput.disabled = false;
+                        saveBtn.style.display = 'block';
+                        editBtn.style.display = 'none';
+                        deleteBtn.style.display = 'none';
+                        dayInput.value = '';
+                        nightInput.value = '';
+                        dateInput.value = '';
+
+                        const existingHint = document.querySelector('.initial-date-hint');
+                        if (existingHint) existingHint.remove();
+                    }
+                })
+                .catch(error => console.error('Ошибка:', error));
+        }
+
+        // Сохранение начальных показаний
+        function saveInitialReadings() {
+            const initialDay = parseFloat(document.getElementById('initialDayReading').value);
+            const initialNight = parseFloat(document.getElementById('initialNightReading').value);
+            const initialDate = document.getElementById('initialReadingDate').value;
+
+            if (isNaN(initialDay) || isNaN(initialNight)) {
+                alert('Пожалуйста, введите начальные показания');
+                return;
+            }
+
+            if (!initialDate) {
+                alert('Пожалуйста, укажите дату начальных показаний');
+                return;
+            }
+
+            const saveBtn = document.getElementById('saveInitialBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '⏳ Сохранение...';
+
+            fetch('/api/save-initial-readings/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    day: initialDay,
+                    night: initialNight,
+                    date: initialDate
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Сохранить начальные показания';
+
+                if (data.success) {
+                    alert('Начальные показания сохранены!');
+                    checkInitialReadings();
+                    loadLastReadings();
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            })
+            .catch(error => {
+                saveBtn.disabled = false;
+                saveBtn.textContent = '💾 Сохранить начальные показания';
+                alert('Ошибка: ' + error);
+            });
+        }
+
+        // Редактирование начальных показаний
+        function editInitialReadings() {
+            const initialSection = document.querySelector('.initial-readings-section');
+            const dayInput = document.getElementById('initialDayReading');
+            const nightInput = document.getElementById('initialNightReading');
+            const dateInput = document.getElementById('initialReadingDate');
+            const saveBtn = document.getElementById('saveInitialBtn');
+            const editBtn = document.getElementById('editInitialBtn');
+            const deleteBtn = document.getElementById('deleteInitialBtn');
+
+            fetch('/api/check-initial-readings/')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.has_initial) {
+                        dayInput.value = data.initial_day;
+                        nightInput.value = data.initial_night;
+                        let dateStr = data.initial_date;
+                        if (dateStr && dateStr.match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+                            const parts = dateStr.split('.');
+                            dateStr = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                        }
+                        dateInput.value = dateStr;
+
+                        dayInput.disabled = false;
+                        nightInput.disabled = false;
+                        dateInput.disabled = false;
+                        saveBtn.style.display = 'block';
+                        saveBtn.textContent = '💾 Обновить начальные показания';
+                        editBtn.style.display = 'none';
+                        deleteBtn.style.display = 'none';
+                        initialSection.classList.add('edit-mode');
+
+                        saveBtn.onclick = function() {
+                            updateInitialReadings();
+                        };
+
+                        const buttonGroup = document.querySelector('.button-group');
+                        const cancelBtn = document.createElement('button');
+                        cancelBtn.className = 'btn-cancel';
+                        cancelBtn.textContent = '❌ Отмена';
+                        cancelBtn.onclick = function() {
+                            cancelEdit();
+                        };
+                        buttonGroup.appendChild(cancelBtn);
+                    }
+                });
+        }
+
+        // Обновление начальных показаний
+        function updateInitialReadings() {
+            const initialDay = parseFloat(document.getElementById('initialDayReading').value);
+            const initialNight = parseFloat(document.getElementById('initialNightReading').value);
+            const initialDate = document.getElementById('initialReadingDate').value;
+
+            if (isNaN(initialDay) || isNaN(initialNight)) {
+                alert('Пожалуйста, введите корректные показания');
+                return;
+            }
+
+            if (!initialDate) {
+                alert('Пожалуйста, укажите дату');
+                return;
+            }
+
+            fetch('/api/edit-initial-readings/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    day: initialDay,
+                    night: initialNight,
+                    date: initialDate
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Начальные показания обновлены!');
+                    cancelEdit();
+                    checkInitialReadings();
+                    loadLastReadings();
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            })
+            .catch(error => alert('Ошибка: ' + error));
+        }
+
+        // Отмена редактирования
+        function cancelEdit() {
+            const initialSection = document.querySelector('.initial-readings-section');
+            const dayInput = document.getElementById('initialDayReading');
+            const nightInput = document.getElementById('initialNightReading');
+            const dateInput = document.getElementById('initialReadingDate');
+            const saveBtn = document.getElementById('saveInitialBtn');
+            const editBtn = document.getElementById('editInitialBtn');
+            const deleteBtn = document.getElementById('deleteInitialBtn');
+
+            dayInput.value = '';
+            nightInput.value = '';
+            dateInput.value = '';
+            dayInput.disabled = true;
+            nightInput.disabled = true;
+            dateInput.disabled = true;
+            saveBtn.style.display = 'none';
+            saveBtn.textContent = '💾 Сохранить начальные показания';
+            editBtn.style.display = 'block';
+            deleteBtn.style.display = 'block';
+            initialSection.classList.remove('edit-mode');
+
+            saveBtn.onclick = saveInitialReadings;
+
+            const cancelBtn = document.querySelector('.btn-cancel');
+            if (cancelBtn) cancelBtn.remove();
+        }
+
+        // Удаление начальных показаний
+        function deleteInitialReadings() {
+            if (confirm('Вы уверены, что хотите удалить начальные показания? Это действие нельзя отменить.')) {
+                fetch('/api/delete-initial-readings/', {
+                    method: 'DELETE',
+                    headers: {
+                        'X-CSRFToken': getCSRFToken()
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Начальные показания удалены');
+                        checkInitialReadings();
+                        loadLastReadings();
+                    } else {
+                        alert('Ошибка: ' + data.error);
+                    }
+                })
+                .catch(error => alert('Ошибка: ' + error));
+            }
+        }
+
+        function loadLastReadings() {
+            fetch('/api/last-reading/')
+                .then(response => response.json())
+                .then(data => {
+                    if (data && data.day && data.night) {
+                        if (data.is_initial) {
+                            document.getElementById('dayReading').placeholder = `Последние (начальные): День=${data.day}, Ночь=${data.night}`;
+                        } else {
+                            document.getElementById('dayReading').placeholder = `Последние: ${data.day} kWh`;
+                            document.getElementById('nightReading').placeholder = `Последние: ${data.night} kWh`;
+                        }
+                    } else {
+                        document.getElementById('dayReading').placeholder = '00000.00 (нет данных)';
+                        document.getElementById('nightReading').placeholder = '00000.00 (нет данных)';
+                    }
+                })
+                .catch(error => console.error('Ошибка:', error));
+        }
+
+        function calculate() {
+            const dayCurrent = parseFloat(document.getElementById('dayReading').value);
+            const nightCurrent = parseFloat(document.getElementById('nightReading').value);
+            const readingDate = document.getElementById('readingDate')?.value || null;
+
+            if (isNaN(dayCurrent) || isNaN(nightCurrent)) {
+                alert('Пожалуйста, введите оба показания');
+                return;
+            }
+
+            const calcBtn = document.getElementById('calculateBtn');
+            calcBtn.disabled = true;
+            calcBtn.textContent = '⏳ Расчёт...';
+
+            fetch('/api/calculate/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    day_current: dayCurrent,
+                    night_current: nightCurrent,
+                    reading_date: readingDate
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                calcBtn.disabled = false;
+                calcBtn.textContent = 'Рассчитать';
+
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+
+                if (data.first_time) {
+                    alert(data.message);
+                    loadLastReadings();
+                    return;
+                }
+
+                if (data.period_detected) {
+                    displayPeriodResult(data);
+                } else {
+                    displayResult(data);
+                }
+
+                loadHistory();
+                document.getElementById('dayReading').value = '';
+                document.getElementById('nightReading').value = '';
+                if (document.getElementById('readingDate')) {
+                    document.getElementById('readingDate').value = '';
+                }
+            })
+            .catch(error => {
+                calcBtn.disabled = false;
+                calcBtn.textContent = 'Рассчитать';
+                alert('Ошибка: ' + error);
+            });
+        }
+
+        function displayResult(data) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+
+            let dayHtml = '';
+            if (data.details && data.details.day && data.details.day.details && data.details.day.details.length > 0) {
+                data.details.day.details.forEach(d => {
+                    dayHtml += `<div class="range-item">${d.range}-й диапазон: ${d.kwh.toFixed(2)} kWh × ${d.tariff} ₽ = <strong>${d.cost.toFixed(2)} ₽</strong></div>`;
+                });
+            } else {
+                dayHtml = '<div class="range-item">Нет расхода</div>';
+            }
+
+            let nightHtml = '';
+            if (data.details && data.details.night && data.details.night.details && data.details.night.details.length > 0) {
+                data.details.night.details.forEach(d => {
+                    nightHtml += `<div class="range-item">${d.range}-й диапазон: ${d.kwh.toFixed(2)} kWh × ${d.tariff} ₽ = <strong>${d.cost.toFixed(2)} ₽</strong></div>`;
+                });
+            } else {
+                nightHtml = '<div class="range-item">Нет расхода</div>';
+            }
+
+            resultDiv.innerHTML = `
+                <div class="result-header">
+                    <h3>💰 Результат расчёта</h3>
+                    <button class="btn-pdf" onclick="exportToPDF(${JSON.stringify(data).replace(/"/g, '&quot;')})">📄 Скачать PDF</button>
+                </div>
+                <div class="readings-summary">
+                    <div class="readings-item">📊 ДЕНЬ: ${data.day_prev.toFixed(0)} → ${data.day_current.toFixed(0)} = ${data.day_consumption.toFixed(2)} kWh</div>
+                    <div class="readings-item">🌙 НОЧЬ: ${data.night_prev.toFixed(0)} → ${data.night_current.toFixed(0)} = ${data.night_consumption.toFixed(2)} kWh</div>
+                    <div class="readings-item total">📈 ВСЕГО: ${data.total_consumption.toFixed(2)} kWh</div>
+                </div>
+                <div class="cost-breakdown">
+                    <div class="cost-day">
+                        <h4>☀️ Дневной тариф</h4>
+                        ${dayHtml}
+                        <div class="total-cost">Итого день: <strong>${data.details.day.total.toFixed(2)} ₽</strong></div>
+                    </div>
+                    <div class="cost-night">
+                        <h4>🌙 Ночной тариф</h4>
+                        ${nightHtml}
+                        <div class="total-cost">Итого ночь: <strong>${data.details.night.total.toFixed(2)} ₽</strong></div>
+                    </div>
+                </div>
+                <div class="grand-total">
+                    🏆 ИТОГО К ОПЛАТЕ: <strong>${data.total_cost.toFixed(2)} ₽</strong>
+                </div>
+            `;
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function displayPeriodResult(data) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+
+            let monthlyHtml = '';
+            if (data.monthly_breakdown && data.monthly_breakdown.length > 0) {
+                data.monthly_breakdown.forEach(month => {
+                    monthlyHtml += `
+                        <div class="month-item">
+                            <strong>Месяц ${month.month}:</strong><br>
+                            Расход: ${month.day_consumption} (день) + ${month.night_consumption} (ночь) = ${month.total_consumption} kWh<br>
+                            Стоимость: <strong>${month.cost.toFixed(2)} ₽</strong>
+                        </div>
+                    `;
+                });
+            }
+
+            resultDiv.innerHTML = `
+                <div class="result-header">
+                    <h3>💰 Результат расчёта</h3>
+                    <button class="btn-pdf" onclick="exportToPDF(${JSON.stringify(data).replace(/"/g, '&quot;')})">📄 Скачать PDF</button>
+                </div>
+                <div class="alert-info">
+                    ⚠️ Обнаружен период в ${data.months_count} месяцев (${data.days_count} дней)<br>
+                    Расход равномерно распределён по месяцам для избежания завышенного тарифа
+                </div>
+                <div class="readings-summary">
+                    <div class="readings-item">📊 ДЕНЬ: ${data.day_prev.toFixed(0)} → ${data.day_current.toFixed(0)} = ${data.day_total.toFixed(2)} kWh (всего)</div>
+                    <div class="readings-item">🌙 НОЧЬ: ${data.night_prev.toFixed(0)} → ${data.night_current.toFixed(0)} = ${data.night_total.toFixed(2)} kWh (всего)</div>
+                    <div class="readings-item total">📈 ВСЕГО за период: ${data.total_consumption.toFixed(2)} kWh</div>
+                    <div class="readings-item">📊 Среднемесячный расход: День: ${data.day_per_month.toFixed(2)} | Ночь: ${data.night_per_month.toFixed(2)} kWh</div>
+                </div>
+                <div class="monthly-breakdown">
+                    <h4>📆 Помесячная разбивка:</h4>
+                    ${monthlyHtml}
+                </div>
+                <div class="grand-total">
+                    🏆 ИТОГО К ОПЛАТЕ: <strong>${data.total_cost.toFixed(2)} ₽</strong>
+                </div>
+            `;
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function exportToPDF(data) {
+            fetch('/api/export-pdf/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                if (response.ok) {
+                    return response.blob();
+                }
+                return response.json().then(err => { throw new Error(err.error); });
+            })
+            .then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `kvitanciya_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(error => alert('Ошибка при создании PDF: ' + error));
+        }
+
+        function loadHistory() {
+            fetch('/api/history/')
+                .then(response => response.json())
+                .then(history => {
+                    const historyDiv = document.getElementById('historyList');
+                    if (!history || history.length === 0) {
+                        historyDiv.innerHTML = '<p class="empty-history">История пока пуста</p>';
+                        return;
+                    }
+
+                    let html = '';
+                    history.forEach(record => {
+                        let statusClass = '';
+                        let statusText = '';
+                        if (record.balance <= 0) {
+                            statusClass = 'paid';
+                            statusText = '✅ Оплачено';
+                        } else if (record.total_paid > 0) {
+                            statusClass = 'partial';
+                            statusText = '⚠️ Частично оплачено';
+                        } else {
+                            statusClass = 'unpaid';
+                            statusText = '❌ Не оплачено';
+                        }
+
+                        html += `
+                            <div class="history-item ${statusClass}">
+                                <div class="history-header">
+                                    <div class="history-date">📅 ${record.date}</div>
+                                    <div class="history-status">${statusText}</div>
+                                </div>
+                                <div class="history-details">
+                                    <div>📊 Расход: ${record.total_consumption.toFixed(2)} kWh</div>
+                                    <div>💰 Начислено: <strong>${record.total_cost.toFixed(2)} ₽</strong></div>
+                                    <div>💳 Оплачено: ${record.total_paid.toFixed(2)} ₽</div>
+                                    <div class="balance">Остаток: <strong>${record.balance.toFixed(2)} ₽</strong></div>
+                                </div>
+                                <div class="history-actions">
+                                    <button class="btn-payment" onclick="showPaymentForm(${record.id}, ${record.balance})">➕ Добавить платёж</button>
+                                    <button class="btn-edit-reading" onclick="editReading(${record.id})">✏️ Редактировать показания</button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    historyDiv.innerHTML = html;
+                })
+                .catch(error => console.error('Ошибка:', error));
+        }
+
+        function showPaymentForm(billId, balance) {
+            currentBillId = billId;
+            document.getElementById('paymentAmount').value = balance > 0 ? balance : 0;
+            document.getElementById('paymentDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('paymentNote').value = '';
+            document.getElementById('paymentModal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('paymentModal').style.display = 'none';
+            currentBillId = null;
+        }
+
+        function savePayment() {
+            const amount = parseFloat(document.getElementById('paymentAmount').value);
+            const paymentDate = document.getElementById('paymentDate').value;
+            const note = document.getElementById('paymentNote').value;
+
+            if (isNaN(amount) || amount <= 0) {
+                alert('Введите корректную сумму платежа');
+                return;
+            }
+
+            fetch('/api/add-payment/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    bill_id: currentBillId,
+                    payment_amount: amount,
+                    payment_date: paymentDate,
+                    note: note
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Платёж добавлен!');
+                    closeModal();
+                    loadHistory();
+                } else {
+                    alert('Ошибка: ' + data.error);
+                }
+            })
+            .catch(error => alert('Ошибка: ' + error));
+        }
+
+        function editReading(billId) {
+            fetch(`/api/get-reading-by-bill/${billId}/`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.reading_id) {
+                        recalculateReading(
+                            data.reading_id,
+                            data.day_reading,
+                            data.night_reading,
+                            data.reading_date
+                        );
+                    }
+                })
+                .catch(error => alert('Ошибка: ' + error));
+        }
+
+        function recalculateReading(readingId, oldDay, oldNight, oldDate) {
+            const newDay = parseFloat(prompt('Введите новое показание ДЕНЬ (Т1):', oldDay));
+            if (isNaN(newDay)) return;
+
+            const newNight = parseFloat(prompt('Введите новое показание НОЧЬ (Т2):', oldNight));
+            if (isNaN(newNight)) return;
+
+            let newDate = prompt('Введите новую дату (ГГГГ-ММ-ДД) или оставьте пустым:', oldDate);
+            if (newDate === null) return;
+
+            fetch('/api/recalculate/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCSRFToken()
+                },
+                body: JSON.stringify({
+                    reading_id: readingId,
+                    day_new: newDay,
+                    night_new: newNight,
+                    reading_date: newDate || null
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Ошибка: ' + data.error);
+                    return;
+                }
+
+                if (data.success) {
+                    alert(data.message);
+                    if (data.period_detected) {
+                        displayPeriodResult(data);
+                    } else if (data.details) {
+                        displayResult(data);
+                    }
+                    loadHistory();
+                    loadLastReadings();
+                }
+            })
+            .catch(error => alert('Ошибка: ' + error));
+        }
+
+        // Закрытие модального окна при клике вне его
+        window.onclick = function(event) {
+            const modal = document.getElementById('paymentModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+    </script>
+</body>
+</html>
