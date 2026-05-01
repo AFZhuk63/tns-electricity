@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+myenv/
+ENV/
+env.bak/
+venv.bak/
+
+# Django
+*.log
+*.pot
+*.pyc
+db.sqlite3
+.DS_Store
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.idea/
+*.iml
+
+# Static files
+staticfiles/
+static/
+media/
+
+# Data files
+data/
+*.json
+!requirements.txt
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project specific
+tns_electricity/data/
+*.sqlite3
