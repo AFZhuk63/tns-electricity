@@ -252,3 +252,81 @@ git push
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![Django](https://img.shields.io/badge/Django-4.2-green)
 ![Status](https://img.shields.io/badge/Status-Active-success)
+
+# Установка SQLite через Power Shell Windows
+
+Вариант 1 — Установить SQLite через winget (лучший способ)
+Просто выполняю в PowerShell (не Git Bash):
+
+```powershell
+winget install SQLite.sqlite
+```
+После установки проверть:
+
+```powershell
+sqlite3 --version
+```
+## Теперь можно входить в базу через Power Shell Windows
+## Перейди в папку проекта:
+
+```bash
+cd ~/my_django_project
+sqlite3 db.sqlite3
+```
+Внутри SQLite появится приглашение:
+
+```Код
+sqlite>
+```
+
+Теперь команды работают:
+
+```sql
+.tables
+.schema tns_electricity_meterreading
+SELECT * FROM tns_electricity_meterreading LIMIT 10;
+```
+Выход:
+
+```sql
+.exit
+```
+### Просмотр базы данных
+Таблицы Django + твои домены:
+```Код
+auth_*
+django_*
+tns_electricity_meterreading
+tns_electricity_payment
+tns_electricity_bill
+tns_electricity_billdetail
+```
+Это идеально — структура соответствует  миграциям.
+
+### Что дальше можно сделать
+Вот несколько полезных команд, которые пригодятся прямо сейчас.
+
+### 🔍 Посмотреть все записи в платежах
+```sql
+SELECT * FROM tns_electricity_payment;
+```
+### 🔍 Посмотреть счета (bill)
+```sql
+SELECT * FROM tns_electricity_bill;
+```
+### 🔍 Посмотреть детали счёта (billdetail)
+```sql
+SELECT * FROM tns_electricity_billdetail;
+```
+### 🔍 Посмотреть последние показания
+```sql
+SELECT * FROM tns_electricity_meterreading ORDER BY id DESC LIMIT 5;
+```
+### 🔍 Проверить, есть ли NULL‑значения, которые могут ломать расчёты
+```sql
+SELECT * FROM tns_electricity_meterreading WHERE reading_date IS NULL;
+```
+### 🔍 Проверить начальные показания
+```sql
+SELECT * FROM tns_electricity_meterreading WHERE is_initial = 1;
+```
