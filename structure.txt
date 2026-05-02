@@ -1,10 +1,13 @@
 my_django_project/
 ├── Print_three_project.py
+├── TNS_Energo/
+│   ├── tns_energy.py
+│   └── tns_readings.json
 ├── __init__.py
 ├── manage.py
 ├── media/
 ├── my_django_project/
-│   ├── _init__.py
+│   ├── __init__.py
 │   ├── asgi.py
 │   ├── settings.py
 │   ├── urls.py
@@ -14,25 +17,25 @@ my_django_project/
 │   ├── Scripts/
 ├── requirements.txt
 ├── structure.txt
-├── tns_electricity/
-│   ├── __init__.py
-│   ├── admin.py
-│   ├── apps.py
-│   ├── data/
-│   │   └── readings.json
-│   ├── migrations/
-│   │   ├── 0001_initial.py
-│   │   └── __init__.py
-│   ├── models.py
-│   ├── static/
-│   │   └── tns_electricity/
-│   │       └── style.css
-│   ├── tns_electricity/
-│   │   └── templates/
-│   │       └── index.html
-│   ├── urls.py
-│   ├── utils.py
-│   └── views.py
-└── ТНС_Энерго/
-    ├── tns_energy.py
-    └── tns_readings.json
+└── tns_electricity/
+    ├── __init__.py
+    ├── admin.py
+    ├── apps.py
+    ├── data/
+    │   └── readings.json
+    ├── migrations/
+    │   ├── 0001_initial.py
+    │   ├── 0002_meterreading_reading_date.py
+    │   ├── 0003_meterreading_is_initial_meterreading_note.py
+    │   ├── 0004_payment.py
+    │   └── __init__.py
+    ├── models.py
+    ├── static/
+    │   └── tns_electricity/
+    │       └── style.css
+    ├── templates/
+    │   └── tns_electricity/
+    │       └── index.html
+    ├── urls.py
+    ├── utils.py
+    └── views.py
