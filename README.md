@@ -66,7 +66,7 @@ python manage.py runserver
 Откройте браузер: http://127.0.0.1:8000
 
 Структура проекта
-text
+```text
 my_django_project/
 ├── manage.py
 ├── requirements.txt
@@ -83,7 +83,8 @@ my_django_project/
 │   ├── static/
 │   └── templates/
 └── media/
-API Endpoints
+```
+## API Endpoints
 GET /api/last-reading/ - последние показания
 
 GET /api/check-initial-readings/ - проверка начальных показаний
@@ -100,27 +101,22 @@ POST /api/add-payment/ - добавление платежа
 
 POST /api/export-pdf/ - экспорт в PDF
 
-Технологии
-Django 4.2
+## Технологии
+- Django 4.2
+- SQLite3
+- ReportLab (PDF generation)
+- HTML5/CSS3
+- Vanilla JavaScript
 
-SQLite3
-
-ReportLab (PDF generation)
-
-HTML5/CSS3
-
-Vanilla JavaScript
-
-Лицензия
+## Лицензия
 MIT
 
-Автор
-Ваше Имя
+## Автор
+### Anatoliy Zhuk 
 
 Статус проекта
 ✅ В разработке, работает стабильно
 
-text
 
 ### 3. Создайте `requirements.txt` (если ещё нет):
 
@@ -146,19 +142,13 @@ git status
 # Создаём первый коммит
 git commit -m "Initial commit: ТНС энерго Кубань учёт электроэнергии"
 ### 5. Создайте репозиторий на GitHub:
-Зайдите на GitHub
-
-Нажмите на + в правом верхнем углу → New repository
-
-Название: tns-electricity (или любое другое)
-
-Описание: Веб-приложение для учёта электроэнергии ТНС энерго Кубань
-
-Выберите Public или Private
-
-НЕ отмечайте "Add a README file" (уже создали)
-
-Нажмите Create repository
+1. Зайти на GitHub
+2. Нажмите на + в правом верхнем углу → New repository
+3. Название: tns-electricity (или любое другое)
+4. Описание: Веб-приложение для учёта электроэнергии ТНС энерго Кубань
+5. Выберите Public или Private
+6. НЕ отмечайте "Add a README file" (уже создали)
+7. Нажать Create repository
 
 ### 6. Свяжите локальный репозиторий с GitHub:
 bash
@@ -174,13 +164,13 @@ git remote add origin git@github.com:YOUR_USERNAME/tns-electricity.git
 git branch -M main
 git push -u origin main
 ```
-### 8. После успешного пуша, проверьте:
+### 8. После успешного пуша, проверяем:
 Откройте https://github.com/YOUR_USERNAME/tns-electricity - там должен быть ваш код.
 
 Дополнительные файлы (опционально):
-Создайте LICENSE файл (MIT License):
-bash
-# Создайте файл LICENSE
+Создаю LICENSE файл (MIT License):
+
+# Создаю файл LICENSE
 echo "# MIT License" > LICENSE
 Или используйте веб-интерфейс GitHub для добавления лицензии.
 
@@ -230,14 +220,15 @@ git pull
 
 # Посмотреть историю коммитов
 git log --oneline
+
 Готово!
-Теперь ваш проект на GitHub. Завтра сможем приступить к созданию Telegram бота для приёма показаний через мессенджер.
+Теперь проект на GitHub. 
+Завтра приступаю к созданию Telegram бота для приёма показаний через мессенджер.
 
-Важно: Не забудьте добавить в .gitignore чувствительные данные:
-
-db.sqlite3 (база данных)
-
-media/ (загруженные файлы)
+Важно: 
+- Не забыть добавить в .gitignore чувствительные данные:
+- db.sqlite3 (база данных)
+- media/ (загруженные файлы)
 
 __pycache__/
 
@@ -245,10 +236,19 @@ myenv/ (виртуальное окружение)
 
 Если вы уже закоммитили эти файлы, можно их удалить:
 
-bash
+```bash
 git rm -r --cached myenv/
 git rm --cached db.sqlite3
 git commit -m "Remove sensitive files"
 git push
-Дайте знать, когда создадите репозиторий, и завтра приступим к Telegram боту! 🚀
-
+```
+## Пояснения по бейджам
+- MIT License — кликабельный, ведёт на LICENSE
+- Python 3.8+ — показывает минимальную версию
+- Django 4.2 — фиксирует фреймворк проекта
+- Status: Active — подчёркивает, что проект живой и развивается
+Ссылки на бейджи:
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
+![Django](https://img.shields.io/badge/Django-4.2-green)
+![Status](https://img.shields.io/badge/Status-Active-success)
