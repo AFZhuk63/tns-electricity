@@ -14,8 +14,11 @@ urlpatterns = [
     path('api/delete-initial-readings/', views.delete_initial_readings, name='delete_initial'),
     path('api/calculate/', views.calculate, name='calculate'),
     path('api/recalculate/', views.recalculate, name='recalculate'),
-    path('api/history/', views.get_history, name='history'),
+    path('api/history/', views.get_history_table, name='history'),  # Изменено: get_history -> get_history_table
     path('api/add-payment/', views.add_payment, name='add_payment'),
     path('api/get-reading-by-bill/<int:bill_id>/', views.get_reading_by_bill, name='get_reading_by_bill'),
     path('api/export-pdf/', views.export_pdf, name='export_pdf'),
+    path('api/export-history-pdf/', views.export_history_pdf, name='export_history_pdf'),
+    path('api/export-history-excel/', views.export_history_excel, name='export_history_excel'),
+    path('api/history-table/', views.get_history_table, name='history_table'),
 ]
