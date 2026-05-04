@@ -1,27 +1,42 @@
 # tns_electricity/views.py
 
-from django.shortcuts import render
-from django.http import JsonResponse, HttpResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
-from django.utils import timezone
-from datetime import datetime, timedelta
-import json
-from io import BytesIO
+# Django core
+from django.shortcuts import render           # Для рендеринга шаблонов
+from django.http import JsonResponse, HttpResponse  # Для API ответов
+from django.views.decorators.csrf import csrf_exempt  # Отключение CSRF для API
+from django.views.decorators.http import require_http_methods  # Ограничение методов HTTP
+from django.utils import timezone             # Для работы с временными зонами
+from .utils import calculate_total, TARIFFS
 
+# Python standard
+from datetime import datetime, timedelta     # Для работы с датами
+import json                                   # Для парсинга JSON
+from io import BytesIO                        # Для работы с байтовыми потоками
+import csv                                    # Для экспорта в CSV
+
+# Project models
 from .models import MeterReading, Bill, BillDetail, Payment
 from .utils import calculate_total
 
-# Импорт для PDF
+# PDF generation (ReportLab)
 try:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
+    print("Warning: ReportLab not installed. PDF export disabled.")
+
+# Excel generation (OpenPyXL)
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+    print("Warning: OpenPyXL not installed. Excel export disabled.")
 
 
 def index(request):
@@ -165,7 +180,8 @@ def delete_initial_readings(request):
     has_bills = Bill.objects.filter(prev_reading=initial_reading).exists()
     if has_bills:
         return JsonResponse(
-            {'error': 'Нельзя удалить начальные показания, так как по ним уже были произведены расчёты'}, status=400)
+            {'error': 'Нельзя удалить начальные показания, так как по ним уже были произведены расчёты'},
+            status=400)
 
     initial_reading.delete()
 
@@ -176,45 +192,144 @@ def delete_initial_readings(request):
 
 
 def calculate_period_distribution(prev_reading, current_reading, day_consumption, night_consumption):
-    """Распределяет расход по месяцам при длительном периоде"""
+    """
+    Распределяет расход по месяцам при длительном периоде
+    ПО НОВЫМ ПРАВИЛАМ: сначала общий расход, потом последовательное заполнение диапазонов по месяцам
+    """
+    # Вычисляем количество месяцев между показаниями
     if prev_reading.reading_date and current_reading.reading_date:
         months_diff = (current_reading.reading_date.year - prev_reading.reading_date.year) * 12 + \
                       (current_reading.reading_date.month - prev_reading.reading_date.month)
         days_diff = (current_reading.reading_date - prev_reading.reading_date).days
     else:
-        months_diff = max(1, (current_reading.date.date() - prev_reading.date.date()).days // 30)
-        days_diff = (current_reading.date.date() - prev_reading.date.date()).days
+        months_diff = 1
+        days_diff = 30
 
     if months_diff <= 0:
         months_diff = 1
 
-    day_per_month = day_consumption / months_diff
-    night_per_month = night_consumption / months_diff
+    # Общий расход за период
+    total_day = day_consumption
+    total_night = night_consumption
+
+    # Рассчитываем доли дня и ночи в общем расходе
+    total_consumption = total_day + total_night
+    if total_consumption > 0:
+        day_share = total_day / total_consumption
+        night_share = total_night / total_consumption
+    else:
+        day_share = night_share = 0
+
+    # Параметры диапазонов
+    range1_limit = 1100  # 1 диапазон в месяц
+    range2_limit = 600   # 2 диапазон в месяц (всего 1700 - 1100 = 600)
+
+    # Максимальные значения за весь период
+    max_range1_total = range1_limit * months_diff
+    max_range2_total = range2_limit * months_diff
+
+    # Распределяем общий расход по диапазонам
+    # 1 диапазон (до 1100 kWh в месяц)
+    range1_used = min(total_consumption, max_range1_total)
+    remaining_after_range1 = total_consumption - range1_used
+
+    # 2 диапазон (до 600 kWh в месяц)
+    range2_used = min(remaining_after_range1, max_range2_total)
+    range3_used = remaining_after_range1 - range2_used
+
+    # Разбиваем по месяцам для детализации
+    monthly_breakdown = []
+    remaining_range1 = range1_used
+    remaining_range2 = range2_used
+    remaining_range3 = range3_used
 
     total_cost = 0
-    monthly_breakdown = []
 
     for month in range(months_diff):
-        month_result = calculate_total(day_per_month, night_per_month)
-        total_cost += month_result['total_cost']
+        month_day = 0
+        month_night = 0
+        month_cost = 0
+        month_details = {'day': {'details': [], 'total': 0}, 'night': {'details': [], 'total': 0}}
+
+        # Распределяем 1 диапазон по месяцам
+        month_range1 = min(remaining_range1, range1_limit)
+        if month_range1 > 0:
+            day_part = month_range1 * day_share
+            night_part = month_range1 * night_share
+
+            day_cost = day_part * TARIFFS["day"][1]
+            night_cost = night_part * TARIFFS["night"][1]
+
+            month_day += day_part
+            month_night += night_part
+            month_cost += day_cost + night_cost
+
+            month_details['day']['details'].append({"range": 1, "kwh": day_part, "tariff": TARIFFS["day"][1], "cost": day_cost})
+            month_details['day']['total'] += day_cost
+            month_details['night']['details'].append({"range": 1, "kwh": night_part, "tariff": TARIFFS["night"][1], "cost": night_cost})
+            month_details['night']['total'] += night_cost
+
+            remaining_range1 -= month_range1
+
+        # Распределяем 2 диапазон по месяцам
+        month_range2 = min(remaining_range2, range2_limit)
+        if month_range2 > 0:
+            day_part = month_range2 * day_share
+            night_part = month_range2 * night_share
+
+            day_cost = day_part * TARIFFS["day"][2]
+            night_cost = night_part * TARIFFS["night"][2]
+
+            month_day += day_part
+            month_night += night_part
+            month_cost += day_cost + night_cost
+
+            month_details['day']['details'].append({"range": 2, "kwh": day_part, "tariff": TARIFFS["day"][2], "cost": day_cost})
+            month_details['day']['total'] += day_cost
+            month_details['night']['details'].append({"range": 2, "kwh": night_part, "tariff": TARIFFS["night"][2], "cost": night_cost})
+            month_details['night']['total'] += night_cost
+
+            remaining_range2 -= month_range2
+
+        # Распределяем 3 диапазон (только на последние месяцы)
+        if remaining_range3 > 0 and month == months_diff - 1:
+            day_part = remaining_range3 * day_share
+            night_part = remaining_range3 * night_share
+
+            day_cost = day_part * TARIFFS["day"][3]
+            night_cost = night_part * TARIFFS["night"][3]
+
+            month_day += day_part
+            month_night += night_part
+            month_cost += day_cost + night_cost
+
+            month_details['day']['details'].append({"range": 3, "kwh": day_part, "tariff": TARIFFS["day"][3], "cost": day_cost})
+            month_details['day']['total'] += day_cost
+            month_details['night']['details'].append({"range": 3, "kwh": night_part, "tariff": TARIFFS["night"][3], "cost": night_cost})
+            month_details['night']['total'] += night_cost
+
+        total_cost += month_cost
+
         monthly_breakdown.append({
             'month': month + 1,
-            'day_consumption': round(day_per_month, 2),
-            'night_consumption': round(night_per_month, 2),
-            'total_consumption': round(day_per_month + night_per_month, 2),
-            'cost': round(month_result['total_cost'], 2),
-            'details': month_result
+            'day_consumption': round(month_day, 2),
+            'night_consumption': round(month_night, 2),
+            'total_consumption': round(month_day + month_night, 2),
+            'cost': round(month_cost, 2),
+            'details': month_details
         })
 
     return {
         'total_cost': total_cost,
         'months_count': months_diff,
         'days_count': days_diff,
-        'day_per_month': day_per_month,
-        'night_per_month': night_per_month,
+        'day_total': total_day,
+        'night_total': total_night,
+        'total_consumption': total_consumption,
+        'day_per_month': total_day / months_diff,
+        'night_per_month': total_night / months_diff,
         'monthly_breakdown': monthly_breakdown
     }
-
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -241,19 +356,11 @@ def calculate(request):
             'error': 'Сначала установите начальные показания счётчика!'
         }, status=400)
 
-    # Получаем последние обычные показания (не начальные)
-    last_reading = MeterReading.objects.filter(is_initial=False).order_by('-reading_date', '-date').first()
+    # ВРЕМЕННО: принудительно используем начальные показания как предыдущие
+    # Это нужно для первого расчёта после очистки
+    prev_reading = initial_reading
 
-    # КРИТИЧНО: Определяем предыдущие показания
-    # Если есть обычные показания - используем их
-    # Если нет обычных показаний - используем начальные
-    if last_reading:
-        prev_reading = last_reading
-        print(
-            f"Используем предыдущие обычные показания: День={prev_reading.day_reading}, Ночь={prev_reading.night_reading}")
-    else:
-        prev_reading = initial_reading
-        print(f"Используем начальные показания: День={prev_reading.day_reading}, Ночь={prev_reading.night_reading}")
+    print(f"DEBUG: prev_reading = {prev_reading.day_reading}/{prev_reading.night_reading}")
 
     # Сохраняем текущие показания
     current_reading = MeterReading.objects.create(
@@ -267,8 +374,7 @@ def calculate(request):
     day_consumption = day_current - prev_reading.day_reading
     night_consumption = night_current - prev_reading.night_reading
 
-    print(f"Расчёт: day_current={day_current} - day_prev={prev_reading.day_reading} = {day_consumption}")
-    print(f"Расчёт: night_current={night_current} - night_prev={prev_reading.night_reading} = {night_consumption}")
+    print(f"DEBUG: day_consumption = {day_consumption}, night_consumption = {night_consumption}")
 
     if day_consumption < 0 or night_consumption < 0:
         current_reading.delete()
@@ -279,7 +385,7 @@ def calculate(request):
     if day_consumption == 0 and night_consumption == 0:
         current_reading.delete()
         return JsonResponse({
-            'error': 'Расход равен нулю. Показания не изменились с момента предыдущей передачи.'
+            'error': 'Расход равен нулю. Показания не изменились.'
         }, status=400)
 
     # Проверяем период
@@ -288,6 +394,7 @@ def calculate(request):
 
     if prev_reading.reading_date and current_reading.reading_date:
         days_diff = (current_reading.reading_date - prev_reading.reading_date).days
+        print(f"DEBUG: days_diff = {days_diff}")
         if days_diff > 45:
             period_detected = True
             period_data = calculate_period_distribution(
@@ -369,7 +476,6 @@ def calculate(request):
             'total_cost': round(calculation['total_cost'], 2),
             'details': calculation
         })
-
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -533,9 +639,10 @@ def recalculate(request):
             'message': 'Показания обновлены без перерасчёта (счёт не найден)'
         })
 
+
 @require_http_methods(["GET"])
 def get_history(request):
-    """Получить историю платежей"""
+    """Получить историю платежей (для совместимости со старыми вызовами)"""
     bills = Bill.objects.all().order_by('-date')[:20]
     history = []
     for bill in bills:
@@ -557,6 +664,45 @@ def get_history(request):
             } for p in payments]
         })
     return JsonResponse(history, safe=False)
+
+
+@require_http_methods(["GET"])
+def get_history_table(request):
+    """Получить историю платежей в табличном формате"""
+    bills = Bill.objects.all().order_by('date')
+
+    history_data = []
+    for bill in bills:
+        payments = Payment.objects.filter(bill=bill).order_by('payment_date')
+        period = bill.date.strftime('%m.%Y')
+
+        if payments:
+            for payment in payments:
+                history_data.append({
+                    'period': period,
+                    'accrued': round(bill.total_cost, 2),
+                    'bill_id': bill.id,
+                    'payment_amount': round(payment.payment_amount, 2),
+                    'payment_date': payment.payment_date.strftime('%d.%m.%Y'),
+                    'payment_id': payment.id,
+                    'day_reading': bill.current_reading.day_reading,
+                    'night_reading': bill.current_reading.night_reading,
+                    'consumption': round(bill.total_consumption, 0)
+                })
+        else:
+            history_data.append({
+                'period': period,
+                'accrued': round(bill.total_cost, 2),
+                'bill_id': bill.id,
+                'payment_amount': 0,
+                'payment_date': '-',
+                'payment_id': None,
+                'day_reading': bill.current_reading.day_reading,
+                'night_reading': bill.current_reading.night_reading,
+                'consumption': round(bill.total_consumption, 0)
+            })
+
+    return JsonResponse(history_data, safe=False)
 
 
 @csrf_exempt
@@ -595,6 +741,22 @@ def add_payment(request):
         'message': 'Платёж добавлен',
         'payment_id': payment.id
     })
+
+
+@require_http_methods(["GET"])
+def get_reading_by_bill(request, bill_id):
+    """Получить показания по ID счёта"""
+    try:
+        bill = Bill.objects.get(id=bill_id)
+        reading = bill.current_reading
+        return JsonResponse({
+            'reading_id': reading.id,
+            'day_reading': reading.day_reading,
+            'night_reading': reading.night_reading,
+            'reading_date': reading.reading_date.strftime('%Y-%m-%d') if reading.reading_date else None
+        })
+    except Bill.DoesNotExist:
+        return JsonResponse({'error': 'Счёт не найден'}, status=404)
 
 
 @csrf_exempt
@@ -678,17 +840,126 @@ def export_pdf(request):
     response['Content-Disposition'] = 'attachment; filename="kvitanciya_tns.pdf"'
     return response
 
+
 @require_http_methods(["GET"])
-def get_reading_by_bill(request, bill_id):
-    """Получить показания по ID счёта"""
-    try:
-        bill = Bill.objects.get(id=bill_id)
-        reading = bill.current_reading
-        return JsonResponse({
-            'reading_id': reading.id,
-            'day_reading': reading.day_reading,
-            'night_reading': reading.night_reading,
-            'reading_date': reading.reading_date.strftime('%Y-%m-%d') if reading.reading_date else None
-        })
-    except Bill.DoesNotExist:
-        return JsonResponse({'error': 'Счёт не найден'}, status=404)
+def export_history_pdf(request):
+    """Экспорт истории платежей в PDF"""
+    if not REPORTLAB_AVAILABLE:
+        return JsonResponse({'error': 'ReportLab не установлен'}, status=500)
+
+    bills = Bill.objects.all().order_by('-date')
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, title="История платежей")
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=20, alignment=1)
+
+    story = []
+    story.append(Paragraph("ТНС энерго Кубань", title_style))
+    story.append(Paragraph("История платежей", styles['Heading2']))
+    story.append(Spacer(1, 20))
+
+    # Подготовка данных для таблицы
+    table_data = [
+        ["Период", "Начислено, руб", "Сумма платежа, руб", "Дата платежа", "Показания (День/Ночь)", "Расход, kWh"]]
+
+    for bill in bills:
+        payments = Payment.objects.filter(bill=bill)
+        period = bill.date.strftime('%m.%Y')
+        readings = f"{bill.current_reading.day_reading:.0f}/{bill.current_reading.night_reading:.0f}"
+
+        if payments:
+            for payment in payments:
+                table_data.append([
+                    period,
+                    f"{bill.total_cost:.2f}",
+                    f"{payment.payment_amount:.2f}",
+                    payment.payment_date.strftime('%d.%m.%Y'),
+                    readings,
+                    f"{bill.total_consumption:.0f}"
+                ])
+        else:
+            table_data.append([
+                period,
+                f"{bill.total_cost:.2f}",
+                "0.00",
+                "-",
+                readings,
+                f"{bill.total_consumption:.0f}"
+            ])
+
+    # Создание таблицы
+    col_widths = [80, 100, 100, 100, 120, 80]
+    t = Table(table_data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+    ]))
+
+    story.append(t)
+    doc.build(story)
+    buffer.seek(0)
+
+    response = HttpResponse(buffer, content_type='application/pdf')
+    response['Content-Disposition'] = 'attachment; filename="history_payments.pdf"'
+    return response
+
+
+@require_http_methods(["GET"])
+def export_history_excel(request):
+    """Экспорт истории платежей в Excel"""
+    if not OPENPYXL_AVAILABLE:
+        return JsonResponse({'error': 'OpenPyXL не установлен. Установите: pip install openpyxl'}, status=500)
+
+    bills = Bill.objects.all().order_by('-date')
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "История платежей"
+
+    # Заголовки
+    headers = ["Период", "Начислено, руб", "Сумма платежа, руб", "Дата платежа", "Показания (День/Ночь)",
+               "Расход, kWh"]
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="667eea", end_color="667eea", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center")
+
+    row = 2
+    for bill in bills:
+        payments = Payment.objects.filter(bill=bill)
+        period = bill.date.strftime('%m.%Y')
+        readings = f"{bill.current_reading.day_reading:.0f}/{bill.current_reading.night_reading:.0f}"
+
+        if payments:
+            for payment in payments:
+                ws.cell(row=row, column=1, value=period)
+                ws.cell(row=row, column=2, value=round(bill.total_cost, 2))
+                ws.cell(row=row, column=3, value=round(payment.payment_amount, 2))
+                ws.cell(row=row, column=4, value=payment.payment_date.strftime('%d.%m.%Y'))
+                ws.cell(row=row, column=5, value=readings)
+                ws.cell(row=row, column=6, value=round(bill.total_consumption, 0))
+                row += 1
+        else:
+            ws.cell(row=row, column=1, value=period)
+            ws.cell(row=row, column=2, value=round(bill.total_cost, 2))
+            ws.cell(row=row, column=3, value=0)
+            ws.cell(row=row, column=4, value="-")
+            ws.cell(row=row, column=5, value=readings)
+            ws.cell(row=row, column=6, value=round(bill.total_consumption, 0))
+            row += 1
+
+    # Настройка ширины колонок
+    column_widths = [15, 18, 18, 15, 22, 12]
+    for i, width in enumerate(column_widths, 1):
+        ws.column_dimensions[chr(64 + i)].width = width
+
+    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition'] = 'attachment; filename="history_payments.xlsx"'
+    wb.save(response)
+    return response
