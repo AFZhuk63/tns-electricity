@@ -40,29 +40,34 @@
 git clone https://github.com/YOUR_USERNAME/tns-electricity.git
 cd tns-electricity
 ```
-Создайте виртуальное окружение:
+## Создайте виртуальное окружение:
 
-bash
+```bash
 python -m venv myenv
 myenv\Scripts\activate  # Windows
 source myenv/bin/activate  # Linux/Mac
-Установите зависимости:
+````
+## Установите зависимости:
 
-bash
+```bash
 pip install -r requirements.txt
+````
 Выполните миграции:
 
-bash
+```bash
 python manage.py makemigrations
 python manage.py migrate
-Создайте суперпользователя:
+````
+## Создайте суперпользователя:
 
-bash
+```bash
 python manage.py createsuperuser
+````
 Запустите сервер:
 
-bash
+```bash
 python manage.py runserver
+````
 Откройте браузер: http://127.0.0.1:8000
 
 Структура проекта
@@ -124,6 +129,12 @@ MIT
 Django==4.2.7
 reportlab==4.0.4
 Pillow==10.1.0
+```
+### 3.1 Проверить, что все модули установлены:
+```bash
+pip list | findstr "reportlab"
+pip list | findstr "openpyxl"
+pip list | findstr "xlwt"
 ```
 ### Инициализируйте Git репозиторий:
 ```bash
@@ -330,3 +341,189 @@ SELECT * FROM tns_electricity_meterreading WHERE reading_date IS NULL;
 ```sql
 SELECT * FROM tns_electricity_meterreading WHERE is_initial = 1;
 ```
+# Сброс начальных показаний  
+
+Способ 1: Через Django shell (рекомендуется)
+```bash
+cd C:\Users\Iron Mask\my_django_project
+myenv\Scripts\activate
+python manage.py shell
+````
+Затем введите:
+
+```python
+from tns_electricity.models import MeterReading, Bill, BillDetail
+```
+# Находим начальные показания
+```
+initial = MeterReading.objects.filter(is_initial=True).first()
+
+if initial:
+    # Удаляем все счета и детали, связанные с начальными показаниями
+    Bill.objects.filter(prev_reading=initial).delete()
+    # Удаляем начальные показания
+    initial.delete()
+    print("✅ Начальные показания успешно сброшены!")
+else:
+    print("❌ Начальные показания не найдены")
+```
+# Проверяем результат
+>print(f"Осталось записей: {MeterReading.objects.count()}")
+## Способ 2: Полный сброс всех данных (включая историю)
+```python
+from tns_electricity.models import MeterReading, Bill, BillDetail, Payment
+```
+# Удаляем все платежи
+>Payment.objects.all().delete()
+>print(f"✅ Удалено платежей: {Payment.objects.count()}")
+
+# Удаляем все детали счетов
+>BillDetail.objects.all().delete()
+>print(f"✅ Удалено деталей счетов: {BillDetail.objects.count()}")
+
+# Удаляем все счета
+>Bill.objects.all().delete()
+>print(f"✅ Удалено счетов: {Bill.objects.count()}")
+
+# Удаляем все показания (включая начальные)
+>MeterReading.objects.all().delete()
+>print(f"✅ Удалено показаний: {MeterReading.objects.count()}")
+
+>print("🎉 Полный сброс данных выполнен!")
+## Способ 3: Однострочная команда (через manage.py shell)
+```bash
+python manage.py shell -c "from tns_electricity.models import MeterReading; MeterReading.objects.filter(is_initial=True).delete(); print('Начальные показания сброшены')"
+```
+## Способ 4: Через админ-панель Django
+- Запустите сервер: python manage.py runserver
+
+- Перейдите в админ-панель: http://127.0.0.1:8000/admin
+
+- Войдите под суперпользователем
+
+- Найдите раздел "Показания счётчика" (Meter readings)
+
+- Найдите запись с пометкой "🔰 Начальные показания"
+
+- Отметьте её и выберите "Delete selected"
+
+## Способ 5: Написать отдельную управляющую команду
+Создайте файл tns_electricity/management/commands/reset_initial.py:
+
+```python
+from django.core.management.base import BaseCommand
+from tns_electricity.models import MeterReading, Bill, BillDetail, Payment
+
+class Command(BaseCommand):
+    help = 'Сброс начальных показаний и связанных данных'
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--full',
+            action='store_true',
+            help='Полный сброс всех данных (включая историю)',
+        )
+
+    def handle(self, *args, **options):
+        if options['full']:
+            Payment.objects.all().delete()
+            BillDetail.objects.all().delete()
+            Bill.objects.all().delete()
+            MeterReading.objects.all().delete()
+            self.stdout.write(self.style.SUCCESS('✅ Полный сброс всех данных выполнен!'))
+        else:
+            initial = MeterReading.objects.filter(is_initial=True).first()
+            if initial:
+                Bill.objects.filter(prev_reading=initial).delete()
+                initial.delete()
+                self.stdout.write(self.style.SUCCESS('✅ Начальные показания сброшены!'))
+            else:
+                self.stdout.write(self.style.WARNING('❌ Начальные показания не найдены'))
+```
+Затем выполните:
+
+bash
+# Только сброс начальных показаний
+python manage.py reset_initial
+
+# Полный сброс всех данных
+```
+python manage.py reset_initial --full
+```
+Проверка после сброса:
+```bash
+python manage.py shell -c "from tns_electricity.models import MeterReading; print(f'Начальные показания: {MeterReading.objects.filter(is_initial=True).count()}')"
+```
+После сброса начальных показаний, при следующем входе в систему кнопка "Сохранить начальные показания" снова станет активной.
+
+## Способ 6. После исправлений перезапустите сервер и удалите неверные расчёты:
+```bash
+python manage.py shell
+```
+```python
+from tns_electricity.models import Bill, BillDetail
+Bill.objects.all().delete()
+BillDetail.objects.all().delete()
+exit()
+```
+Теперь расход должен считаться правильно: 20964 - 18334 = 2630 kWh (день), а не 20964 - 0 = 20964 kWh!
+
+## Правила расчета потребления электричества:
+Не верно считает - "💰 Результат расчёта
+```
+📄 Скачать PDF
+📊 ДЕНЬ: 0 → 20964 = 20964.00 kWh
+🌙 НОЧЬ: 0 → 9722 = 9722.00 kWh
+📈 ВСЕГО: 30686.00 kWh
+☀️ Дневной тариф
+1-й диапазон: 751.50 kWh × 5.88 ₽ = 4418.80 ₽
+2-й диапазон: 409.91 kWh × 7.99 ₽ = 3275.16 ₽
+3-й диапазон: 19802.60 kWh × 16.7 ₽ = 330703.38 ₽
+Итого день: 338397.33 ₽
+🌙 Ночной тариф
+1-й диапазон: 348.50 kWh × 3.16 ₽ = 1101.27 ₽
+2-й диапазон: 190.09 kWh × 4.3 ₽ = 817.40 ₽
+3-й диапазон: 9183.40 kWh × 8.93 ₽ = 82007.79 ₽
+Итого ночь: 83926.46 ₽
+🏆 ИТОГО К ОПЛАТЕ: 422323.79 ₽"                                                                                                                   
+```
+## Верный расчет: 
+1. начальные показания по дневной зоне на 01.26.2026 - 18334 kWh, 
+текушие показания на 04.26.2026 - 20964 kwh. Вычесления 20964 - 18334 = 2630 kwh. 
+Следовательно эти данные за три месяца (04.26.2026 -01.26.2026) должны считаться 
+так - по среднему 2630 / 3 = 876,7 kWh. Что в среднем не превышает величины потребления по 1-му диапозону
+Следовательно за февраль (с 01.26.2026 по 02.26.2026).  
+1-й диапазон начисляется по максимуму: 1100 kWh, за март (с 02.26.2026 по 03.26.2026) 
+1-й диапазон начисляется по максимуму: 1100 kWh, и за апрель (с 03.26.2026 по 04.26.2026)  \
+1-й диапазон начисляется по остатку: 2360 - (1100+1100 kWh) = 160 kWh по тарифу 5,88 руб/kWh, 
+2. Если бы расход был к примеру 5600 kWh, то расчет был бы таким   - по среднему 5600 / 3 = 1866,7 kWh. 
+Следовательно за февраль (с 01.26.2026 по 02.26.2026).  
+1-й диапазон начисляется по максимуму: 1100 kWh, за март (с 02.26.2026 по 03.26.2026) 
+1-й диапазон начисляется по максимуму: 1100 kWh, и за апрель (с 03.26.2026 по 04.26.2026)  
+1-й диапазон начисляется по максимуму  1100 kWh. 
+3. Остаток  5600 - (1100+1100+1100)= 2300 преносится на 2-й диапозон по тарифу 7,99 руб/kWh.  
+Следовательно за февраль (с 01.26.2026 по 02.26.2026).  
+2-й диапазон начисляется по максимуму: 600 kWh, за март (с 02.26.2026 по 03.26.2026) 
+2-й диапазон начисляется по максимуму: 600 kWh, и за апрель (с 03.26.2026 по 04.26.2026)  
+2-й диапазон начисляется по максимуму  600 kWh.   
+4. Остаток: 5600 - (1100+1100 +1100 + 600 + 600 +600 kWh) = 500 kWh на дату передачи текущих показаний 
+переносится на 3-й диапозон по тарифу 16,7 руб/kWh
+
+## Вход в кастомную админку:
+http://127.0.0.1:8000/custom-admin/
+
+Должны появиться жёлтые кнопки с инструментами администратора
+
+## Вход в стандартную админку:
+http://127.0.0.1:8000/admin/
+Она должна остаться без изменений
+
+Всё готово! 🎉
+Теперь есть :
+
+- ✅ Рабочий расчёт электроэнергии 
+- ✅ Красивый интерфейс 
+- ✅ История платежей с таблицей 
+- ✅ Экспорт в PDF и Excel 
+- ✅ Кастомная админка с кнопками очистки 
+- ✅ Стандартная админка без изменений
