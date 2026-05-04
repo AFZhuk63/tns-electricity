@@ -1,0 +1,25 @@
+<!--tns_electricity/templates/admin/custom_index.html-->
+
+{% extends "admin/index.html" %}
+
+{% block content %}
+<div style="margin-bottom: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px;">
+    <h3 style="margin: 0 0 10px 0; color: #856404;">🔧 Инструменты администратора</h3>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <a href="/custom-admin/reset-data/" 
+           onclick="return confirm('ВНИМАНИЕ! Это удалит все данные (счета, платежи, показания). Начальные показания будут сохранены. Продолжить?');" 
+           style="display: inline-block; padding: 8px 16px; background: #dc3545; color: white; text-decoration: none; border-radius: 4px;">
+            🗑️ Очистить все данные (сброс до начальных показаний)
+        </a>
+        <a href="/custom-admin/reset-data-full/" 
+           onclick="return confirm('⚠️ ПОЛНАЯ ОЧИСТКА! Это удалит ВСЕ данные, включая начальные показания. Придётся заново устанавливать начальные показания. Продолжить?');" 
+           style="display: inline-block; padding: 8px 16px; background: #6c757d; color: white; text-decoration: none; border-radius: 4px;">
+            🔥 Полная очистка (удалить всё)
+        </a>
+    </div>
+    <p style="margin: 10px 0 0 0; font-size: 12px; color: #856404;">
+        💡 Подсказка: Также можно использовать команду <code>python manage.py reset_data</code>
+    </p>
+</div>
+{{ block.super }}
+{% endblock %}
