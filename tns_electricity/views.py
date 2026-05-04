@@ -194,7 +194,9 @@ def delete_initial_readings(request):
 def calculate_period_distribution(prev_reading, current_reading, day_consumption, night_consumption):
     """
     Распределяет расход по месяцам при длительном периоде
-    ПО НОВЫМ ПРАВИЛАМ: сначала общий расход, потом последовательное заполнение диапазонов по месяцам
+    ПРАВИЛЬНЫЙ АЛГОРИТМ:
+    - Сначала распределяем общий расход по месяцам равномерно
+    - Для каждого месяца рассчитываем стоимость по диапазонам (1-й до 1100, 2-й до 600, 3-й остаток)
     """
     # Вычисляем количество месяцев между показаниями
     if prev_reading.reading_date and current_reading.reading_date:
@@ -212,123 +214,137 @@ def calculate_period_distribution(prev_reading, current_reading, day_consumption
     total_day = day_consumption
     total_night = night_consumption
 
-    # Рассчитываем доли дня и ночи в общем расходе
-    total_consumption = total_day + total_night
-    if total_consumption > 0:
-        day_share = total_day / total_consumption
-        night_share = total_night / total_consumption
-    else:
-        day_share = night_share = 0
+    # Ежемесячный расход (равномерно)
+    day_per_month = total_day / months_diff
+    night_per_month = total_night / months_diff
 
     # Параметры диапазонов
-    range1_limit = 1100  # 1 диапазон в месяц
-    range2_limit = 600   # 2 диапазон в месяц (всего 1700 - 1100 = 600)
+    RANGE1_LIMIT = 1100  # 1-й диапазон до 1100 kWh
+    RANGE2_LIMIT = 600  # 2-й диапазон 1101-1700 (всего 600 kWh)
 
-    # Максимальные значения за весь период
-    max_range1_total = range1_limit * months_diff
-    max_range2_total = range2_limit * months_diff
-
-    # Распределяем общий расход по диапазонам
-    # 1 диапазон (до 1100 kWh в месяц)
-    range1_used = min(total_consumption, max_range1_total)
-    remaining_after_range1 = total_consumption - range1_used
-
-    # 2 диапазон (до 600 kWh в месяц)
-    range2_used = min(remaining_after_range1, max_range2_total)
-    range3_used = remaining_after_range1 - range2_used
-
-    # Разбиваем по месяцам для детализации
     monthly_breakdown = []
-    remaining_range1 = range1_used
-    remaining_range2 = range2_used
-    remaining_range3 = range3_used
-
     total_cost = 0
+    total_day_cost = 0
+    total_night_cost = 0
 
     for month in range(months_diff):
-        month_day = 0
-        month_night = 0
-        month_cost = 0
-        month_details = {'day': {'details': [], 'total': 0}, 'night': {'details': [], 'total': 0}}
+        month_day = day_per_month
+        month_night = night_per_month
+        month_total = month_day + month_night
 
-        # Распределяем 1 диапазон по месяцам
-        month_range1 = min(remaining_range1, range1_limit)
-        if month_range1 > 0:
-            day_part = month_range1 * day_share
-            night_part = month_range1 * night_share
+        month_day_cost = 0
+        month_night_cost = 0
+        month_day_details = []
+        month_night_details = []
 
-            day_cost = day_part * TARIFFS["day"][1]
-            night_cost = night_part * TARIFFS["night"][1]
+        # Оставшийся расход для распределения по диапазонам
+        remaining_day = month_day
+        remaining_night = month_night
 
-            month_day += day_part
-            month_night += night_part
-            month_cost += day_cost + night_cost
+        # 1-й диапазон (до 1100 kWh в месяц)
+        range1_limit = RANGE1_LIMIT
+        if remaining_day + remaining_night > 0:
+            # Распределяем пропорционально долям
+            total_remaining = remaining_day + remaining_night
+            day_share = remaining_day / total_remaining
+            night_share = remaining_night / total_remaining
 
-            month_details['day']['details'].append({"range": 1, "kwh": day_part, "tariff": TARIFFS["day"][1], "cost": day_cost})
-            month_details['day']['total'] += day_cost
-            month_details['night']['details'].append({"range": 1, "kwh": night_part, "tariff": TARIFFS["night"][1], "cost": night_cost})
-            month_details['night']['total'] += night_cost
+            range1_used = min(total_remaining, range1_limit)
+            if range1_used > 0:
+                day_part = range1_used * day_share
+                night_part = range1_used * night_share
 
-            remaining_range1 -= month_range1
+                day_cost = day_part * TARIFFS["day"][1]
+                night_cost = night_part * TARIFFS["night"][1]
 
-        # Распределяем 2 диапазон по месяцам
-        month_range2 = min(remaining_range2, range2_limit)
-        if month_range2 > 0:
-            day_part = month_range2 * day_share
-            night_part = month_range2 * night_share
+                month_day_cost += day_cost
+                month_night_cost += night_cost
 
-            day_cost = day_part * TARIFFS["day"][2]
-            night_cost = night_part * TARIFFS["night"][2]
+                if day_part > 0:
+                    month_day_details.append(
+                        {"range": 1, "kwh": day_part, "tariff": TARIFFS["day"][1], "cost": day_cost})
+                if night_part > 0:
+                    month_night_details.append(
+                        {"range": 1, "kwh": night_part, "tariff": TARIFFS["night"][1], "cost": night_cost})
 
-            month_day += day_part
-            month_night += night_part
-            month_cost += day_cost + night_cost
+                remaining_day -= day_part
+                remaining_night -= night_part
 
-            month_details['day']['details'].append({"range": 2, "kwh": day_part, "tariff": TARIFFS["day"][2], "cost": day_cost})
-            month_details['day']['total'] += day_cost
-            month_details['night']['details'].append({"range": 2, "kwh": night_part, "tariff": TARIFFS["night"][2], "cost": night_cost})
-            month_details['night']['total'] += night_cost
+        # 2-й диапазон (до 600 kWh в месяц)
+        if remaining_day + remaining_night > 0:
+            total_remaining = remaining_day + remaining_night
+            day_share = remaining_day / total_remaining
+            night_share = remaining_night / total_remaining
 
-            remaining_range2 -= month_range2
+            range2_used = min(total_remaining, RANGE2_LIMIT)
+            if range2_used > 0:
+                day_part = range2_used * day_share
+                night_part = range2_used * night_share
 
-        # Распределяем 3 диапазон (только на последние месяцы)
-        if remaining_range3 > 0 and month == months_diff - 1:
-            day_part = remaining_range3 * day_share
-            night_part = remaining_range3 * night_share
+                day_cost = day_part * TARIFFS["day"][2]
+                night_cost = night_part * TARIFFS["night"][2]
 
-            day_cost = day_part * TARIFFS["day"][3]
-            night_cost = night_part * TARIFFS["night"][3]
+                month_day_cost += day_cost
+                month_night_cost += night_cost
 
-            month_day += day_part
-            month_night += night_part
-            month_cost += day_cost + night_cost
+                if day_part > 0:
+                    month_day_details.append(
+                        {"range": 2, "kwh": day_part, "tariff": TARIFFS["day"][2], "cost": day_cost})
+                if night_part > 0:
+                    month_night_details.append(
+                        {"range": 2, "kwh": night_part, "tariff": TARIFFS["night"][2], "cost": night_cost})
 
-            month_details['day']['details'].append({"range": 3, "kwh": day_part, "tariff": TARIFFS["day"][3], "cost": day_cost})
-            month_details['day']['total'] += day_cost
-            month_details['night']['details'].append({"range": 3, "kwh": night_part, "tariff": TARIFFS["night"][3], "cost": night_cost})
-            month_details['night']['total'] += night_cost
+                remaining_day -= day_part
+                remaining_night -= night_part
 
-        total_cost += month_cost
+        # 3-й диапазон (остаток)
+        if remaining_day + remaining_night > 0:
+            day_cost = remaining_day * TARIFFS["day"][3]
+            night_cost = remaining_night * TARIFFS["night"][3]
+
+            month_day_cost += day_cost
+            month_night_cost += night_cost
+
+            if remaining_day > 0:
+                month_day_details.append(
+                    {"range": 3, "kwh": remaining_day, "tariff": TARIFFS["day"][3], "cost": day_cost})
+            if remaining_night > 0:
+                month_night_details.append(
+                    {"range": 3, "kwh": remaining_night, "tariff": TARIFFS["night"][3], "cost": night_cost})
+
+        total_cost += month_day_cost + month_night_cost
+        total_day_cost += month_day_cost
+        total_night_cost += month_night_cost
 
         monthly_breakdown.append({
             'month': month + 1,
             'day_consumption': round(month_day, 2),
             'night_consumption': round(month_night, 2),
             'total_consumption': round(month_day + month_night, 2),
-            'cost': round(month_cost, 2),
-            'details': month_details
+            'day_cost': round(month_day_cost, 2),
+            'night_cost': round(month_night_cost, 2),
+            'cost': round(month_day_cost + month_night_cost, 2),
+            'day_details': month_day_details,
+            'night_details': month_night_details
         })
 
     return {
-        'total_cost': total_cost,
+        'total_cost': round(total_cost, 2),
         'months_count': months_diff,
         'days_count': days_diff,
         'day_total': total_day,
         'night_total': total_night,
-        'total_consumption': total_consumption,
-        'day_per_month': total_day / months_diff,
-        'night_per_month': total_night / months_diff,
-        'monthly_breakdown': monthly_breakdown
+        'total_consumption': total_day + total_night,
+        'day_per_month': day_per_month,
+        'night_per_month': night_per_month,
+        'day_total_cost': round(total_day_cost, 2),
+        'night_total_cost': round(total_night_cost, 2),
+        'monthly_breakdown': monthly_breakdown,
+        # Для совместимости с displayPeriodResult
+        'details': {
+            'day': {'total': round(total_day_cost, 2)},
+            'night': {'total': round(total_night_cost, 2)}
+        }
     }
 
 @csrf_exempt
@@ -411,17 +427,28 @@ def calculate(request):
             total_cost=round(period_data['total_cost'], 2)
         )
 
+        # Исправленная часть: используем правильную структуру данных
         for month_data in period_data['monthly_breakdown']:
-            for zone in ['day', 'night']:
-                for detail in month_data['details'][zone]['details']:
-                    BillDetail.objects.create(
-                        bill=bill,
-                        zone=zone,
-                        range_num=detail['range'],
-                        kwh=round(detail['kwh'], 2),
-                        tariff=detail['tariff'],
-                        cost=round(detail['cost'], 2)
-                    )
+            # Дневные детали
+            for detail in month_data['day_details']:
+                BillDetail.objects.create(
+                    bill=bill,
+                    zone='day',
+                    range_num=detail['range'],
+                    kwh=round(detail['kwh'], 2),
+                    tariff=detail['tariff'],
+                    cost=round(detail['cost'], 2)
+                )
+            # Ночные детали
+            for detail in month_data['night_details']:
+                BillDetail.objects.create(
+                    bill=bill,
+                    zone='night',
+                    range_num=detail['range'],
+                    kwh=round(detail['kwh'], 2),
+                    tariff=detail['tariff'],
+                    cost=round(detail['cost'], 2)
+                )
 
         return JsonResponse({
             'success': True,
@@ -438,7 +465,9 @@ def calculate(request):
             'total_cost': round(period_data['total_cost'], 2),
             'day_per_month': round(period_data['day_per_month'], 2),
             'night_per_month': round(period_data['night_per_month'], 2),
-            'monthly_breakdown': period_data['monthly_breakdown']
+            'monthly_breakdown': period_data['monthly_breakdown'],
+            'day_total_cost': round(period_data['day_total_cost'], 2),
+            'night_total_cost': round(period_data['night_total_cost'], 2),
         })
     else:
         calculation = calculate_total(day_consumption, night_consumption)
@@ -674,7 +703,16 @@ def get_history_table(request):
     history_data = []
     for bill in bills:
         payments = Payment.objects.filter(bill=bill).order_by('payment_date')
-        period = bill.date.strftime('%m.%Y')
+
+        # Формируем период из дат показаний
+        period = f"{bill.prev_reading.reading_date.strftime('%d.%m.%Y')} - {bill.current_reading.reading_date.strftime('%d.%m.%Y')}" if bill.prev_reading and bill.prev_reading.reading_date and bill.current_reading.reading_date else bill.date.strftime(
+            '%m.%Y')
+
+        # Формируем показания
+        readings = f"{bill.current_reading.day_reading:.0f} / {bill.current_reading.night_reading:.0f}"
+
+        # Формируем расход день/ночь
+        consumption_detail = f"{bill.day_consumption:.0f} / {bill.night_consumption:.0f}"
 
         if payments:
             for payment in payments:
@@ -685,9 +723,9 @@ def get_history_table(request):
                     'payment_amount': round(payment.payment_amount, 2),
                     'payment_date': payment.payment_date.strftime('%d.%m.%Y'),
                     'payment_id': payment.id,
-                    'day_reading': bill.current_reading.day_reading,
-                    'night_reading': bill.current_reading.night_reading,
-                    'consumption': round(bill.total_consumption, 0)
+                    'readings': readings,
+                    'consumption_detail': consumption_detail,
+                    'total_consumption': round(bill.total_consumption, 0)
                 })
         else:
             history_data.append({
@@ -697,13 +735,12 @@ def get_history_table(request):
                 'payment_amount': 0,
                 'payment_date': '-',
                 'payment_id': None,
-                'day_reading': bill.current_reading.day_reading,
-                'night_reading': bill.current_reading.night_reading,
-                'consumption': round(bill.total_consumption, 0)
+                'readings': readings,
+                'consumption_detail': consumption_detail,
+                'total_consumption': round(bill.total_consumption, 0)
             })
 
     return JsonResponse(history_data, safe=False)
-
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -847,7 +884,7 @@ def export_history_pdf(request):
     if not REPORTLAB_AVAILABLE:
         return JsonResponse({'error': 'ReportLab не установлен'}, status=500)
 
-    bills = Bill.objects.all().order_by('-date')
+    bills = Bill.objects.all().order_by('date')
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, title="История платежей")
@@ -862,12 +899,14 @@ def export_history_pdf(request):
 
     # Подготовка данных для таблицы
     table_data = [
-        ["Период", "Начислено, руб", "Сумма платежа, руб", "Дата платежа", "Показания (День/Ночь)", "Расход, kWh"]]
+        ["Период", "Начислено, руб", "Сумма платежа, руб", "Дата платежа", "Показания (День/Ночь)", "Расход (День/Ночь), kWh"]
+    ]
 
     for bill in bills:
         payments = Payment.objects.filter(bill=bill)
-        period = bill.date.strftime('%m.%Y')
+        period = f"{bill.prev_reading.reading_date.strftime('%d.%m.%Y')} - {bill.current_reading.reading_date.strftime('%d.%m.%Y')}" if bill.prev_reading and bill.prev_reading.reading_date and bill.current_reading.reading_date else bill.date.strftime('%m.%Y')
         readings = f"{bill.current_reading.day_reading:.0f}/{bill.current_reading.night_reading:.0f}"
+        consumption_detail = f"{bill.day_consumption:.0f}/{bill.night_consumption:.0f}"
 
         if payments:
             for payment in payments:
@@ -877,7 +916,7 @@ def export_history_pdf(request):
                     f"{payment.payment_amount:.2f}",
                     payment.payment_date.strftime('%d.%m.%Y'),
                     readings,
-                    f"{bill.total_consumption:.0f}"
+                    consumption_detail
                 ])
         else:
             table_data.append([
@@ -886,11 +925,11 @@ def export_history_pdf(request):
                 "0.00",
                 "-",
                 readings,
-                f"{bill.total_consumption:.0f}"
+                consumption_detail
             ])
 
     # Создание таблицы
-    col_widths = [80, 100, 100, 100, 120, 80]
+    col_widths = [100, 100, 100, 100, 100, 100]
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
@@ -915,15 +954,14 @@ def export_history_excel(request):
     if not OPENPYXL_AVAILABLE:
         return JsonResponse({'error': 'OpenPyXL не установлен. Установите: pip install openpyxl'}, status=500)
 
-    bills = Bill.objects.all().order_by('-date')
+    bills = Bill.objects.all().order_by('date')
 
     wb = Workbook()
     ws = wb.active
     ws.title = "История платежей"
 
     # Заголовки
-    headers = ["Период", "Начислено, руб", "Сумма платежа, руб", "Дата платежа", "Показания (День/Ночь)",
-               "Расход, kWh"]
+    headers = ["Период", "Начислено, руб", "Сумма платежа, руб", "Дата платежа", "Показания (День/Ночь)", "Расход (День/Ночь), kWh"]
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = Font(bold=True, color="FFFFFF")
@@ -933,8 +971,9 @@ def export_history_excel(request):
     row = 2
     for bill in bills:
         payments = Payment.objects.filter(bill=bill)
-        period = bill.date.strftime('%m.%Y')
+        period = f"{bill.prev_reading.reading_date.strftime('%d.%m.%Y')} - {bill.current_reading.reading_date.strftime('%d.%m.%Y')}" if bill.prev_reading and bill.prev_reading.reading_date and bill.current_reading.reading_date else bill.date.strftime('%m.%Y')
         readings = f"{bill.current_reading.day_reading:.0f}/{bill.current_reading.night_reading:.0f}"
+        consumption_detail = f"{bill.day_consumption:.0f}/{bill.night_consumption:.0f}"
 
         if payments:
             for payment in payments:
@@ -943,7 +982,7 @@ def export_history_excel(request):
                 ws.cell(row=row, column=3, value=round(payment.payment_amount, 2))
                 ws.cell(row=row, column=4, value=payment.payment_date.strftime('%d.%m.%Y'))
                 ws.cell(row=row, column=5, value=readings)
-                ws.cell(row=row, column=6, value=round(bill.total_consumption, 0))
+                ws.cell(row=row, column=6, value=consumption_detail)
                 row += 1
         else:
             ws.cell(row=row, column=1, value=period)
@@ -951,11 +990,11 @@ def export_history_excel(request):
             ws.cell(row=row, column=3, value=0)
             ws.cell(row=row, column=4, value="-")
             ws.cell(row=row, column=5, value=readings)
-            ws.cell(row=row, column=6, value=round(bill.total_consumption, 0))
+            ws.cell(row=row, column=6, value=consumption_detail)
             row += 1
 
     # Настройка ширины колонок
-    column_widths = [15, 18, 18, 15, 22, 12]
+    column_widths = [18, 15, 15, 15, 18, 18]
     for i, width in enumerate(column_widths, 1):
         ws.column_dimensions[chr(64 + i)].width = width
 
